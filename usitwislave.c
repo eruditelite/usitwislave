@@ -2,7 +2,6 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#include <avr/sleep.h>
 #include "usitwislave.h"
 
 enum
@@ -24,7 +23,6 @@ enum
 	ss_state_data_processed
 } startstop_state_t;
 
-static void (*idle_callback)(void);
 static void (*data_callback)(uint8_t input_buffer_length,
 			     const uint8_t *input_buffer,
 			     uint8_t *output_buffer_length,
@@ -357,65 +355,58 @@ again:
 }
 
 void
-usi_twi_slave(uint8_t slave_address_in, uint8_t use_sleep,
+usi_twi_slave(uint8_t slave_address_in,
 	      void (*data_callback_in)(uint8_t input_buffer_length,
 				       const uint8_t *input_buffer,
 				       uint8_t *output_buffer_length,
-				       uint8_t *output_buffer),
-	      void (*idle_callback_in)(void))
+				       uint8_t *output_buffer))
 {
-	uint8_t	call_datacallback = 0;
-
 	slave_address = slave_address_in;
 	data_callback = data_callback_in;
-	idle_callback = idle_callback_in;
 
 	input_buffer_length = 0;
 	output_buffer_length = 0;
 	output_buffer_current = 0;
 	ss_state = ss_state_before_start;
 
-	if(use_sleep)
-		set_sleep_mode(SLEEP_MODE_IDLE);
-
 	twi_init();
-
 	sei();
 
-	for(;;)
-	{
-		if(idle_callback)
-			idle_callback();
+	return;
+}
 
-		if (use_sleep && (ss_state == ss_state_before_start))
-			sleep_mode();
+void
+usi_twi_check(void)
+{
+	int call_datacallback = 0;
 
-		if(USISR & _BV(USIPF)) {
-			cli();
+	if(USISR & _BV(USIPF)) {
+		cli();
 
-			USISR |= _BV(USIPF); /* clear stop condition flag */
+		USISR |= _BV(USIPF); /* clear stop condition flag */
 
-			switch(ss_state) {
-			case (ss_state_after_start):
-					twi_reset();
-					break;
-			case (ss_state_data_processed):
-				call_datacallback = 1;
-				break;
-			}
-
-			ss_state = ss_state_before_start;
-
-			sei();
+		switch(ss_state) {
+		case (ss_state_after_start):
+			twi_reset();
+			break;
+		case (ss_state_data_processed):
+			call_datacallback = 1;
+			break;
 		}
 
-		if (call_datacallback) {
-			output_buffer_length = 0;
-			output_buffer_current = 0;
-			data_callback(input_buffer_length, input_buffer,
-				      &output_buffer_length, output_buffer);
-			input_buffer_length = 0;
-			call_datacallback = 0;
-		}
+		ss_state = ss_state_before_start;
+
+		sei();
 	}
+
+	if (call_datacallback) {
+		output_buffer_length = 0;
+		output_buffer_current = 0;
+		data_callback(input_buffer_length, input_buffer,
+			      &output_buffer_length, output_buffer);
+		input_buffer_length = 0;
+		call_datacallback = 0;
+	}
+
+	return;
 }
